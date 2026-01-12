@@ -64,6 +64,7 @@ services:
     container_name: pyspark_notebook
     ports:
       - "8888:8888"
+      - "8501:8501"
     volumes:
       - ./work:/home/jovyan/work
     environment:
