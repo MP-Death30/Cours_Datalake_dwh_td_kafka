@@ -1,0 +1,41 @@
+# pour lancer le transformateur
+spark-submit \
+  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 \
+  weather_transformer.py
+  
+  
+# pour lancer le producteur
+pip install kafka-python
+python current_weather.py 48.85 2.35
+
+# pour lancer le consommateur
+python consumer.py weather_transformed
+
+
+
+
+                  ┌───────────────┐
+                  │ current_weather.py │
+                  │ (producteur Kafka) │
+                  └───────────────┘
+                            │
+                            │ Publie des messages météo dans le topic Kafka "weather_transformed"
+                            ▼
+                  ┌───────────────┐
+                  │ consumer.py    │
+                  │ (consommateur Kafka) │
+                  └───────────────┘
+                            │
+                            │ Lit les messages depuis le topic Kafka
+                            ▼
+                  ┌───────────────┐
+                  │ weather_to_hdfs.py │
+                  │ (sauvegarde dans HDFS) │
+                  └───────────────┘
+                            │
+                            │ Écrit les données dans HDFS sous la structure :
+                            │ /hdfs-data/{country}/{city}/alerts.json
+                            ▼
+                  ┌───────────────┐
+                  │   HDFS         │
+                  └───────────────┘
