@@ -29,6 +29,7 @@ wheels/
 
 # Spark / Hadoop
 work/checkpoints/
+work/checkpoints_anomalies/
 spark-warehouse/
 metastore_db/
 derby.log

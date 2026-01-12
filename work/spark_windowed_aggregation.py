@@ -1,48 +1,48 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, window, avg, count
-from pyspark.sql.types import StructType, StructField, DoubleType, BooleanType, StringType, TimestampType
+from pyspark.sql.functions import from_json, col, window, avg, min, max, count, when
+from pyspark.sql.types import StructType, StructField, DoubleType, StringType, TimestampType
 
-def main():
-    spark = SparkSession.builder \
-        .appName("WeatherAggregation") \
-        .master("local[*]") \
-        .config(
-            "spark.jars.packages",
-            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.2.4"
-        ) \
-        .getOrCreate()
+spark = SparkSession.builder \
+    .appName("WeatherStreamingAggregates") \
+    .getOrCreate()
 
-    spark.sparkContext.setLogLevel("WARN")
+# Schéma correspondant au nouveau topic weather_transformed
+schema = StructType([
+    StructField("city", StringType()),
+    StructField("country", StringType()),
+    StructField("temperature", DoubleType()),
+    StructField("windspeed", DoubleType()),
+    StructField("event_time", TimestampType()),
+    StructField("wind_alert_level", StringType()),
+    StructField("heat_alert_level", StringType())
+])
 
-    schema = StructType([
-        StructField("temperature", DoubleType(), True),
-        StructField("windspeed", DoubleType(), True),
-        StructField("temp_f", DoubleType(), True),
-        StructField("high_wind_alert", BooleanType(), True),
-        StructField("time", StringType(), True)
-    ])
+df = spark.readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "kafka:9092") \
+    .option("subscribe", "weather_transformed") \
+    .load()
 
-    raw_df = spark.read \
-        .format("kafka") \
-        .option("kafka.bootstrap.servers", "kafka:9092") \
-        .option("subscribe", "weather_transformed") \
-        .option("startingOffsets", "earliest") \
-        .load()
+parsed = df.selectExpr("CAST(value AS STRING)") \
+    .select(from_json(col("value"), schema).alias("data")) \
+    .select("data.*")
 
-    json_df = raw_df.selectExpr("CAST(value AS STRING) as json")
-    parsed = json_df.select(from_json(col("json"), schema).alias("data")).select("data.*")
-    parsed = parsed.withColumn("event_time", col("time").cast(TimestampType()))
+# Agrégats sur fenêtre glissante de 5 min toutes les 1 min [cite: 167]
+windowed_agg = parsed.groupBy(
+    window(col("event_time"), "5 minutes", "1 minute"),
+    col("city"), col("country")
+).agg(
+    avg("temperature").alias("avg_temp"),
+    min("temperature").alias("min_temp"),
+    max("temperature").alias("max_temp"),
+    # Compte des alertes critiques [cite: 169]
+    count(when(col("wind_alert_level") != "level_0", 1)).alias("count_wind_alerts"),
+    count(when(col("heat_alert_level") != "level_0", 1)).alias("count_heat_alerts")
+)
 
-    agg = parsed.groupBy(
-        window(col("event_time"), "1 minute")
-    ).agg(
-        avg("temperature").alias("avg_temp_c"),
-        count(col("high_wind_alert")).alias("alert_count")
-    )
+query = windowed_agg.writeStream \
+    .outputMode("complete") \
+    .format("console") \
+    .start()
 
-    agg.show(truncate=False)
-
-    spark.stop()
-
-if __name__ == "__main__":
-    main()
+query.awaitTermination()

@@ -1,38 +1,36 @@
 from kafka import KafkaConsumer
 from hdfs import InsecureClient
 import json
-import os
 
-# Connexion HDFS
-hdfs_client = InsecureClient('namenode:50070', user='hdfs')  # adapte l'URL si nécessaire
+# Connexion HDFS (Port 9870 pour Hadoop 3)
+hdfs_client = InsecureClient('http://namenode:9870', user='root')
 
 consumer = KafkaConsumer(
     'weather_transformed',
     bootstrap_servers='kafka:9092',
-    auto_offset_reset='latest',
-    group_id='weather-hdfs'
+    value_deserializer=lambda x: json.loads(x.decode('utf-8'))
 )
 
+print("Consommateur HDFS démarré et en attente de données...")
 for message in consumer:
-    data = json.loads(message.value)
-    country = data['country']
-    city = data['city']
+    data = message.value
+    country = data.get('country', 'Unknown')
+    city = data.get('city', 'Unknown')
     
-    # Création du chemin HDFS
-    hdfs_path = f'/data/hdfs-data/{country}/{city}/alerts.json'
+    hdfs_path = f'/hdfs-data/{country}/{city}/alerts.json'
     
-    # Vérifie si le fichier existe pour append
-    if hdfs_client.status(hdfs_path, strict=False):
-        # Lecture actuelle, ajout d'une ligne
-        with hdfs_client.read(hdfs_path, encoding='utf-8') as f:
-            current_data = json.load(f)
-    else:
-        current_data = []
-
-    current_data.append(data)
+    # Création récursive des répertoires parents
+    hdfs_client.makedirs(f'/hdfs-data/{country}/{city}')
     
-    # Écriture dans HDFS
-    with hdfs_client.write(hdfs_path, encoding='utf-8', overwrite=True) as f:
-        json.dump(current_data, f)
+    # Vérification : le fichier existe-t-il déjà ?
+    file_exists = hdfs_client.status(hdfs_path, strict=False) is not None
     
-    print(f"Écrit dans HDFS: {hdfs_path}")
+    # Écriture : Création si nouveau (append=False), Ajout si existant (append=True)
+    try:
+        with hdfs_client.write(hdfs_path, append=file_exists, encoding='utf-8') as f:
+            f.write(json.dumps(data) + "\n")
+        
+        status = "Append" if file_exists else "Création"
+        print(f"[{status}] Alerte archivée dans HDFS : {hdfs_path}")
+    except Exception as e:
+        print(f"Erreur lors de l'écriture HDFS : {e}")
